@@ -66,6 +66,14 @@ async def process_game(game_id, season, arenas_info, team_name_mapping, session)
         pbp_endpoint = f"https://api-web.nhle.com/v1/gamecenter/{formatted_game_id}/play-by-play"
         async with session.get(pbp_endpoint) as pbp_response:
             game_data = await pbp_response.json()
+            
+
+        # Fetch Landing Data - Contains Scoring Info for each period at landing>summary->scoring->[Period Number 0 = First Period]
+        landing_endpoint = f"https://api-web.nhle.com/v1/gamecenter/{formatted_game_id}/landing"
+        async with session.get(landing_endpoint) as landing_response:
+            landing_data = await landing_response.json()
+
+        summary, scoring = landing_data['summary'], landing_data['summary']['scoring']
         plays, arena = game_data['plays'], game_data['venue']['default']
         game_datetime = datetime.strptime(game_data['gameDate'], "%Y-%m-%d")
         game_date, standings_date = game_datetime.strftime("%B %d, %Y"), (game_datetime - timedelta(days=1)).strftime("%Y-%m-%d")
@@ -102,9 +110,22 @@ async def process_game(game_id, season, arenas_info, team_name_mapping, session)
                         player_id = details.get('shootingPlayerId') if playType != 'GOAL' else details.get('scoringPlayerId')
                         player_name = players.get(player_id, "Unknown Player")
                         team_name = team_name_mapping.get(game_data['awayTeam']['name']['default'] if shooting_team_id == game_data['awayTeam']['id'] else game_data['homeTeam']['name']['default'], "Unknown Team")
-
+                        
                         event_description = f"{playType} by {player_name} ({team_name})"
-
+                        if play['typeDescKey'].strip().lower() == 'goal':
+                            landing_period = int(play['period']) - 1
+                            time_in_period_datetime = datetime.strptime(play['timeRemaining'], "%H:%M")
+                            goals = scoring[int(f"{landing_period}")]['goals']
+                            for goal in goals:
+                                # time in period for landing page is total time elapsed, where as in play by play it is time remaining
+                                time_in_period_landing = datetime.strptime(goal['timeInPeriod'], "%H:%M")
+                                time_in_period_sum = time_in_period_datetime + timedelta(hours=time_in_period_landing.hour, minutes=time_in_period_landing.minute)
+                                goalCheck = time_in_period_sum.strftime("%H:%M")
+                                if f"{goalCheck}" == f"20:00":
+                                    goals_to_date = goal['goalsToDate']
+                                    event_description += f". Goals To Date: {goals_to_date}"
+                                    break
+                                        
                         shot_info = {
                             "GameID": formatted_game_id,
                             "Arena": arena,
