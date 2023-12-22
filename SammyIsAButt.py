@@ -5,6 +5,7 @@ from datetime import datetime
 from datetime import timedelta
 from pyhigh import get_elevation
 
+#hi im guy
 
 def fetch_team_record(team_name, standings):
     """
