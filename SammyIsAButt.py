@@ -439,8 +439,5 @@ def print_runtime(start_time):
     hours, minutes, seconds = total_seconds // 3600, (total_seconds % 3600) // 60, total_seconds % 60
     print(f"Total runtime: {hours:02d}:{minutes:02d}:{seconds:02d}")
 
-
-   
-
 if __name__ == "__main__":
     asyncio.run(main())
