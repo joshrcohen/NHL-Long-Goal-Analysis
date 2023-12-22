@@ -5,10 +5,6 @@ from datetime import datetime
 from datetime import timedelta
 from pyhigh import get_elevation
 
-#SAMMY IS A MASSIVE BUTTOCKS
-
-#I AM ADDING STUFF
-#more
 
 def fetch_team_record(team_name, standings):
     """
