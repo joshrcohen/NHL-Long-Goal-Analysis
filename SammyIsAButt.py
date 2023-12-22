@@ -5,20 +5,38 @@ from datetime import datetime
 from datetime import timedelta
 from pyhigh import get_elevation
 
-def fetch_team_record(team_name, game_date, standings):
+#SAMMY IS A MASSIVE BUTTOCKS
+
+#I AM ADDING STUFF
+
+
+def fetch_team_record(team_name, standings):
     """
     Fetch the team's record as of a specific date.
     """
+    # Split the provided team name and take the last element (assumed to be the unique part of the team name)
+    team_name_key = team_name.split()[-1].lower()
+    print(f"TEAM NAME: {team_name_key}")
     for team_info in standings:
-        if team_info['teamName']['default'] == team_name:
-            record = {
-                'wins': team_info['wins'],
-                'losses': team_info['losses'],
-                'ot_losses': team_info['otLosses'],
-                'points': team_info['points']
-            }
-            return record
+        # Split the team name from the standings data and compare the last elements
+        team_info_name_key = team_info['teamName']['default'].split()[-1].lower()
+        print(f"STANDING TEAM NAME: {team_info_name_key}")
+        if team_name_key == team_info_name_key:
+            if all(key in team_info for key in ['wins', 'losses', 'otLosses', 'points']):
+                record = {
+                    'wins': team_info['wins'],
+                    'losses': team_info['losses'],
+                    'ot_losses': team_info['otLosses'],
+                    'points': team_info['points']
+                }
+                return record
+            else:
+                print(f"Record keys missing for team: {team_name}")
+                return None
+    print(f"Team not found: {team_name}")
     return None
+
+
 
 def get_arena_elevation(team_name, arenas_info):
 
@@ -134,6 +152,7 @@ for game_id in range(1, TOTAL_GAMES + 1):
         game_datetime = datetime.strptime(game_data['gameDate'], "%Y-%m-%d")
         game_date = game_datetime.strftime("%B %d, %Y")
         standings_date = (game_datetime - timedelta(days=1)).strftime("%Y-%m-%d")
+        print(f"{standings_date}")
         standings_url = f"https://api-web.nhle.com/v1/standings/{standings_date}"
         standings_response = requests.get(standings_url)
 
@@ -168,10 +187,8 @@ for game_id in range(1, TOTAL_GAMES + 1):
 
         if standings_response.status_code == 200:
             standings_data = standings_response.json()['standings']
-            # Find the records for the home and away teams
-            print(f"{away_team_full} v. {home_team_full}")
-            home_team_record = fetch_team_record(home_team_full, standings_date, standings_data)
-            away_team_record = fetch_team_record(away_team_full, standings_date, standings_data)
+            home_team_record = fetch_team_record(home_team_full, standings_data)
+            away_team_record = fetch_team_record(away_team_full, standings_data)
         else:
             print(f"Failed to fetch standings for date {standings_date}. {away_team_full} v. {home_team_full}")
             continue
@@ -227,7 +244,8 @@ for game_id in range(1, TOTAL_GAMES + 1):
                     else:  # type_desc_key == 'goal'
                         playType = "GOAL"
                         event_description = f"Goal by {scoring_player_name} ({away_team if shooting_team_id == game_data['awayTeam']['id'] else home_team})"
-                    
+                    print(f"HOME: {home_team_record['wins']}-{home_team_record['losses']}")
+                    print(f"AWAY: {away_team_record['wins']}-{away_team_record['losses']}")
                     if home_team_record and away_team_record:
                         teams_formatted = f"{away_team_full} ({away_team_record['wins']}-{away_team_record['losses']}-{away_team_record['ot_losses']}) vs. {home_team_full} ({home_team_record['wins']}-{home_team_record['losses']}-{home_team_record['ot_losses']})"
                     else:
