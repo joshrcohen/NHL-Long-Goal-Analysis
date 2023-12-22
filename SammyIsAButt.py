@@ -334,10 +334,6 @@ async def process_game(game_id, session, team_name_mapping):
 
     return shots_data
 
-# Additional functions like fetch_game_data, fetch_landing_data, fetch_standings_data, and process_play
-# will be defined separately to handle specific parts of the data fetching and processing.
-
-
 # Fetch game data from API
 async def fetch_game_data(session, game_id):
     pbp_endpoint = f"{BASE_URL}/{game_id}/play-by-play"
