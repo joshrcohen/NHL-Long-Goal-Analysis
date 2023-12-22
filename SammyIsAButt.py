@@ -13,13 +13,33 @@ import matplotlib.image as mpimg
 from matplotlib.lines import Line2D
 from concurrent.futures import ThreadPoolExecutor
 
-TOTAL_GAMES = 1312
-SEASON = 2021
+#TOTAL_GAMES = 1312
+BATCH_SIZE = 200
+#SEASON = 2021
 BACKGROUND_IMAGE_PATH = './Resources/hockeyRink.png'
 
 # Constants for API URLs
 BASE_URL = "https://api-web.nhle.com/v1/gamecenter"
 ARENA_URL = "https://raw.githubusercontent.com/nhlscorebot/arenas/master/teams.json"
+
+SEASONS_GAMES_MAPPING = {
+    # Add entries for each season with the corresponding number of games
+    #2008: 1230, 
+    #2009: 1230,
+    #2010: 1230,
+    #2011: 1230,
+    #2012: 1230,
+    #2013: 1230,
+    #2014: 1230,
+    2015: 1230,
+    #2016: 1230,
+    #2017: 1230
+    #2018: 1230,
+    #2019: 1230,
+    #2020: 868,
+    #2021: 1312,
+    #2022: 1312,
+}
 
 async def fetch_team_record(team_name, standings):
     team_name_key = team_name.split()[-1].lower()
@@ -47,27 +67,34 @@ async def get_arena_elevation(team_name, arenas_info, session):
         print(f"{team_name} not found in arenas_info")
         return None
 
-def calculate_shot_distance(x_coord, y_coord, shooting_team, home_team_id, home_team_defending_side):
-    # If the shooting team is the home team, they shoot towards the away goal, and vice versa.
-    if shooting_team == home_team_id:
-        # If home team is shooting, the target goal is opposite to the defending side
-        if home_team_defending_side == "left":
-            target_goal_x = 89
-        else:  # home_team_defending_side == "right"
-            target_goal_x = -89
+def calculate_shot_distance(x_coord, y_coord, shooting_team, home_team_id, home_team_defending_side, zone_code):
+    if home_team_defending_side is not None:
+        # If the shooting team is the home team, they shoot towards the away goal, and vice versa.
+        if shooting_team == home_team_id:
+            # If home team is shooting, the target goal is opposite to the defending side
+            target_goal_x = 89 if home_team_defending_side == "left" else -89
+        else:
+            # If away team is shooting, the target goal is on the same side as the defending side
+            target_goal_x = -89 if home_team_defending_side == "left" else 89
     else:
-        # If away team is shooting, the target goal is on the same side as the defending side
-        if home_team_defending_side == "left":
-            target_goal_x = -89
-        else:  # home_team_defending_side == "right"
-            target_goal_x = 89
+        # Use the zoneCode logic as a fallback
+        if zone_code == 'O':
+            # Target goal is the closest one
+            target_goal_x = -89 if x_coord < 0 else 89
+        elif zone_code in ['N', 'D']:
+            # Target goal is the furthest one
+            target_goal_x = 89 if x_coord < 0 else -89 #THIS IS THE FUCKED ONE..WTF DO WE DO WITH N
+        else:
+            # Default handling if zone code is not recognized
+            target_goal_x = -89 if x_coord > 0 else 89
 
     # The y-coordinate for the goal is always 0 (centered along the width of the rink)
     target_goal_y = 0
 
     # Calculate the distance to the target goal
-    distance = math.sqrt( ( (x_coord - target_goal_x) ** 2) + ( (y_coord - target_goal_y) ** 2) )
+    distance = math.sqrt(((x_coord - target_goal_x) ** 2) + ((y_coord - target_goal_y) ** 2))
     return distance
+
 
 def create_heatmap(df, background_image_path):
     # Ensure 'Distance' is a float, not a string
@@ -261,7 +288,6 @@ async def fetch_arenas_info(session):
         arenas_info_text = await response.text()
         return json.loads(arenas_info_text)
 
-
 def get_team_name_mapping():
     """
     Provides a mapping from team abbreviations to full team names.
@@ -304,46 +330,25 @@ def get_team_name_mapping():
             "Kraken": "Seattle Kraken"
         }
 
-# Process game data
-async def process_game(game_id, session, team_name_mapping):
-    formatted_game_id = f"{SEASON}02{game_id:04d}"
-    shots_data = []
-    print(f"Checking game: {game_id}")
-
-    try:
-        game_data = await fetch_game_data(session, formatted_game_id)
-        landing_data = await fetch_landing_data(session, formatted_game_id)
-        standings_data = await fetch_standings_data(session, game_data)
-
-        summary, scoring = landing_data['summary'], landing_data['summary']['scoring']
-        plays, arena = game_data['plays'], game_data['venue']['default']
-        game_datetime = datetime.strptime(game_data['gameDate'], "%Y-%m-%d")
-        game_date = game_datetime.strftime("%B %d, %Y")
-
-        home_team_record = await fetch_team_record(team_name_mapping.get(game_data['homeTeam']['name']['default'], "Unknown Team"), standings_data)
-        away_team_record = await fetch_team_record(team_name_mapping.get(game_data['awayTeam']['name']['default'], "Unknown Team"), standings_data)
-
-        current_away_score, current_home_score = 0, 0
-        players = {player['playerId']: f"{player['firstName']['default']} {player['lastName']['default']}" for player in game_data['rosterSpots']}
-
-        for play in plays:
-            shots_data += process_play(play, game_data, players, team_name_mapping, current_away_score, current_home_score, scoring, game_date, arena)
-
-    except Exception as e:
-        print(f"Error processing game {formatted_game_id}: {e}")
-
-    return shots_data
-
 # Fetch game data from API
 async def fetch_game_data(session, game_id):
     pbp_endpoint = f"{BASE_URL}/{game_id}/play-by-play"
     async with session.get(pbp_endpoint) as pbp_response:
-        return await pbp_response.json()
+        if pbp_response.content_type == 'application/json':
+            return await pbp_response.json()
+        else:
+            print(f"Non-JSON response for game {game_id}: {pbp_response.status} {pbp_response.reason}")
+            return None
 
 async def fetch_landing_data(session, game_id):
     landing_endpoint = f"{BASE_URL}/{game_id}/landing"
     async with session.get(landing_endpoint) as response:
-        return await response.json()
+        if response.content_type == 'application/json':
+            return await response.json()
+        else:
+            print(f"Non-JSON response for game {game_id}: {response.status} {response.reason}")
+            return None
+
 
 async def fetch_standings_data(session, game_data):
 
@@ -354,82 +359,175 @@ async def fetch_standings_data(session, game_data):
         standings_response_json = await response.json()
         return standings_response_json['standings']
 
-def process_play(play, game_data, players, team_name_mapping, current_away_score, current_home_score, scoring, game_date, arena):
-    shots_data = []
-    if 'details' in play and 'awayScore' in play['details'] and 'homeScore' in play['details']:
-        current_away_score = play['details']['awayScore']
-        current_home_score = play['details']['homeScore']
 
-    if play['typeDescKey'].strip().lower() in ['shot-on-goal', 'goal', 'missed-shot'] and 'details' in play:
+# Process game data
+async def process_game(game_id, season, session, team_name_mapping):
+    formatted_game_id = f"{season}02{game_id:04d}"
+    print(f"Checking game: {game_id} Season: {season}")
+
+    try:
+        game_data = await fetch_game_data(session, formatted_game_id)
+        if not game_data:
+            print(f"No data for game {formatted_game_id}")
+            return []
+        landing_data = await fetch_landing_data(session, formatted_game_id)
+        if not landing_data:
+            print(f"No landing data for game {formatted_game_id}")
+            return []
+
+        # Debugging: Check if 'summary' and 'scoring' keys exist
+        if 'summary' not in landing_data or 'scoring' not in landing_data['summary']:
+            print(f"Missing 'summary' or 'scoring' in landing_data for game {formatted_game_id}")
+            return []
+
+        scoring = landing_data['summary']['scoring']
+
+        # Debugging: Check if 'plays' and 'venue' keys exist
+        if 'plays' not in game_data or 'venue' not in game_data:
+            print(f"Missing 'plays' or 'venue' in game_data for game {formatted_game_id}")
+            return []
+
+        plays, arena = game_data['plays'], game_data['venue']['default']
+         
+
+        game_datetime = datetime.strptime(game_data['gameDate'], "%Y-%m-%d")
+        game_date = game_datetime.strftime("%B %d, %Y")
+
+        # Debugging: Check if 'rosterSpots' key exists
+        if 'rosterSpots' not in game_data:
+            print(f"Missing 'rosterSpots' in game_data for game {formatted_game_id}")
+            return []
+
+        players = {player['playerId']: f"{player['firstName']['default']} {player['lastName']['default']}" for player in game_data['rosterSpots']}
+
+        filtered_plays = [play for play in plays if 'details' in play and play['typeDescKey'].strip().lower() in ['shot-on-goal', 'goal', 'missed-shot']]
+
+        shots_data = []
+        for play in filtered_plays:
+            shot_data = process_play(play, game_data, players, team_name_mapping, scoring, game_date, arena, season)
+            if shot_data:
+                shots_data.append(shot_data)
+
+        return shots_data
+
+    except Exception as e:
+        print(f"Error processing game {formatted_game_id}: {e}")
+        return []
+
+
+
+
+def process_play(play, game_data, players, team_name_mapping, scoring, game_date, arena, season):
+    try:
+        if 'details' not in play or 'eventOwnerTeamId' not in play['details']:
+            print("Missing 'details' in play.")
+            return None
+
         details = play['details']
+
+        if 'eventOwnerTeamId' not in details:
+            print("Missing 'eventOwnerTeamId' in play details.")
+            return None
+
+        # Check for missing 'xCoord' and 'yCoord'
+        if 'xCoord' not in details or 'yCoord' not in details:
+            return None
+
         shooting_team_id = details['eventOwnerTeamId']
-        shot_distance = calculate_shot_distance(details['xCoord'], details['yCoord'], shooting_team_id, game_data['homeTeam']['id'], play['homeTeamDefendingSide'].lower())
-        
-        # Retrieve the shot type
+
+        # Use the provided defending_side if homeTeamDefendingSide is missing
+        zone_code = details.get('zoneCode', 'O')
+        home_team_defending_side = play.get('homeTeamDefendingSide')  # Extract home_team_defending_side
+        shot_distance = calculate_shot_distance(details['xCoord'], details['yCoord'], shooting_team_id, game_data['homeTeam']['id'], home_team_defending_side, zone_code)
+
         shot_type = details.get('shotType', 'Unknown').capitalize()
 
-        if play['timeRemaining']:
-            minutes, seconds = map(int, play['timeRemaining'].split(":"))
-            total_seconds_remaining = (minutes * 60) + seconds
+        if 'timeRemaining' not in play or not play['timeRemaining']:
+            return None
 
-            if total_seconds_remaining <= 5 and play['period'] <= 4 and shot_distance >= 90:
-                play_type = "GOAL" if play['typeDescKey'].strip().lower() == 'goal' else "SHOT" if play['typeDescKey'].strip().lower() == 'shot-on-goal' else "MISS"
-                player_id = details.get('shootingPlayerId') if play_type != 'GOAL' else details.get('scoringPlayerId')
-                player_name = players.get(player_id, "Unknown Player")
-                team_name = team_name_mapping.get(game_data['awayTeam']['name']['default'] if shooting_team_id == game_data['awayTeam']['id'] else game_data['homeTeam']['name']['default'], "Unknown Team")
-                
-                event_description = f"{play_type} by {player_name} ({team_name})"
-                if play['typeDescKey'].strip().lower() == 'goal':
-                    landing_period = int(play['period']) - 1
-                    time_in_period_datetime = datetime.strptime(play['timeRemaining'], "%H:%M")
-                    goals = scoring[int(f"{landing_period}")]['goals']
-                    for goal in goals:
-                        time_in_period_landing = datetime.strptime(goal['timeInPeriod'], "%H:%M")
-                        time_in_period_sum = time_in_period_datetime + timedelta(hours=time_in_period_landing.hour, minutes=time_in_period_landing.minute)
-                        goal_check = time_in_period_sum.strftime("%H:%M")
-                        if f"{goal_check}" == f"20:00":
-                            goals_to_date = goal['goalsToDate']
-                            event_description += f". Goals To Date: {goals_to_date}"
-                            break
-                                   
-                shot_info = {
-                            "GameID": game_data["id"],
-                            "Arena": arena,
-                            "Date": game_date,
-                            "Teams": f"{current_away_score} - {current_home_score}",
-                            "Period": play['period'],
-                            "Time Left": play['timeRemaining'],
-                            "Play Type": play_type,
-                            "Shot Type": shot_type,
-                            "x_coord": details['xCoord'],  # Add x coordinate
-                            "y_coord": details['yCoord'],  # Add y coordinate
-                            "Event Description": event_description,
-                            "Distance": f"{shot_distance:.2f} feet",
-                            "Score": f"{current_away_score} - {current_home_score}",
-                            "Play-by-Play URL": f"https://www.nhl.com/scores/htmlreports/{SEASON}{SEASON+1}/PL{game_data['id']}.HTM"
-                        }
-                shots_data.append(shot_info)
-    return shots_data
+        minutes, seconds = map(int, play['timeRemaining'].split(":"))
+        total_seconds_remaining = (minutes * 60) + seconds
+
+        if total_seconds_remaining > 5 or play['period'] > 4 or shot_distance < 90:
+            return None  # Skip processing if conditions are not met
+
+        play_type = "GOAL" if play['typeDescKey'].strip().lower() == 'goal' else "SHOT" if play['typeDescKey'].strip().lower() == 'shot-on-goal' else "MISS"
+        player_id = details.get('shootingPlayerId') if play_type != 'GOAL' else details.get('scoringPlayerId')
+        player_name = players.get(player_id, "Unknown Player")
+        team_name = team_name_mapping.get(game_data['awayTeam']['name']['default'] if shooting_team_id == game_data['awayTeam']['id'] else game_data['homeTeam']['name']['default'], "Unknown Team")
+
+        event_description = f"{play_type} by {player_name} ({team_name})"
+        if play['typeDescKey'].strip().lower() == 'goal':
+            goals_to_date = extract_goals_to_date(play, scoring)
+            if goals_to_date is not None:
+                event_description += f". Goals To Date: {goals_to_date}"
+        
+        # Extract the last 4 digits from game_data['id']
+        game_id_last_4_digits = str(game_data['id'])[-4:]
+        # Correctly format the Play-by-Play URL
+        play_by_play_url = f"https://www.nhl.com/scores/htmlreports/{season}{season+1}/PL02{game_id_last_4_digits}.HTM"
+        return {
+            "GameID": game_data["id"],
+            "Arena": arena,
+            "Date": game_date,
+            "Teams": f"{details.get('awayScore', 0)} - {details.get('homeScore', 0)}",
+            "Period": play['period'],
+            "Time Left": play['timeRemaining'],
+            "Play Type": play_type,
+            "Shot Type": shot_type,
+            "x_coord": details['xCoord'],
+            "y_coord": details['yCoord'],
+            "Event Description": event_description,
+            "Distance": f"{shot_distance:.2f} feet",
+            "Score": f"{details.get('awayScore', 0)} - {details.get('homeScore', 0)}",
+            "Play-by-Play URL": play_by_play_url
+        }
+    except Exception as e:
+        print(f"Error processing play: {e}")
+        return None
 
 
+def extract_goals_to_date(play, scoring):
+    landing_period = int(play['period']) - 1
+    try:
+        goals = scoring[str(landing_period)]['goals']
+        for goal in goals:
+            if goal['timeInPeriod'] == "20:00":
+                return goal['goalsToDate']
+    except KeyError:
+        return None
 
 # Main async function
 async def main():
     start_time = time.time()
+    all_seasons_shots_data = []
 
     async with aiohttp.ClientSession() as session:
         arenas_info = await fetch_arenas_info(session)
         team_name_mapping = get_team_name_mapping()
 
-        tasks = [process_game(game_id, session, team_name_mapping) for game_id in range(1, TOTAL_GAMES + 1)]
-        all_shots_data = await asyncio.gather(*tasks)
+        for season, total_games in SEASONS_GAMES_MAPPING.items():
+            tasks = []
+            for game_id in range(1, total_games + 1):
+                task = asyncio.ensure_future(process_game(game_id, season, session, team_name_mapping))
+                tasks.append(task)
+                
+                if len(tasks) >= BATCH_SIZE:  # Example of increased concurrency
+                    results = await asyncio.gather(*tasks)
+                    all_seasons_shots_data.extend(results)
+                    tasks = []
 
-        df = pd.DataFrame([shot for game_shots in all_shots_data for shot in game_shots])
+            # Process any remaining tasks
+            if tasks:
+                results = await asyncio.gather(*tasks)
+                all_seasons_shots_data.extend(results)
 
-        #await create_heatmap_async(df, background_image_path) #Heatmap
-        #df.to_excel(f'nhl_shots_data_{season}.xlsx', index=False) #Excel File
-        #await create_plot_async(df, background_image_path) #point plot
-        await create_arrow_plot_async(df, BACKGROUND_IMAGE_PATH) #arrow plot
+        # Flatten the list of lists into a single list
+        flattened_data = [item for sublist in all_seasons_shots_data for item in sublist]
+
+    # Create a DataFrame from all seasons data and save to an Excel file
+    df = pd.DataFrame(flattened_data)
+    df.to_excel('nhl_shots_data_2008_2023.xlsx', index=False)
 
     print_runtime(start_time)
 
