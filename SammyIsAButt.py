@@ -2,28 +2,37 @@ import aiohttp
 from aiohttp import TCPConnector
 import os
 import asyncio
-import math
 import pandas as pd
-from datetime import datetime, timedelta
 import time
 import json
 import numpy as np
-import seaborn as sns
+#import seaborn as sns
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 from matplotlib.lines import Line2D
 from matplotlib.animation import FuncAnimation
 import matplotlib.patches as mpatches
 from concurrent.futures import ThreadPoolExecutor
+import src.DataFetcher as fetch
+import src.DataProcessor as dp
+import src.Visualizer as viz
+
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
+BACKGROUND_IMAGE_PATH = os.getenv('BACKGROUND_IMAGE_PATH')
+BATCH_SIZE = int(os.getenv('BATCH_SIZE'))
 
 # Constants
+'''
 BATCH_SIZE = 1312
 BACKGROUND_IMAGE_PATH = './Resources/hockeyRink.png'
 DISTANCE_CUTOFF = -1
 TIME_CUTOFF = 1200   #seconds
 BASE_URL = "https://api-web.nhle.com/v1/gamecenter"
 ARENA_URL = "https://raw.githubusercontent.com/nhlscorebot/arenas/master/teams.json"
-
+'''
 # Season games mapping
 SEASONS_GAMES_MAPPING = {
     # Add entries for each season with the corresponding number of games 
@@ -93,6 +102,7 @@ def print_runtime(start_time):
     print(f"Total runtime: {hours:02d}:{minutes:02d}:{seconds:02d}")
 
 #DataFetcher
+'''
 class DataFetcher:
     def __init__(self, session):
         self.session = session
@@ -148,8 +158,9 @@ class DataFetcher:
         async with self.session.get(standings_url) as response:
             standings_response_json = await response.json()
             return standings_response_json['standings']
-
+'''
 #DataProcessor
+'''
 class DataProcessor:
     #calculate_shot_distance
     @staticmethod
@@ -262,8 +273,9 @@ class DataProcessor:
         except Exception as e:
             print(f"Error processing game {formatted_game_id}: {e}")
             return []
-
+'''
 #Visualizer
+'''
 class Visualizer:
 
     #init
@@ -348,7 +360,7 @@ class Visualizer:
 
         anim.save(f'{output_folder}/seasons_heatmap_animation.gif', writer='pillow', fps=4)
         plt.close()
-
+'''
 #main
 async def main():
     start_time = time.time()
@@ -356,14 +368,14 @@ async def main():
 
     connector = TCPConnector(limit=100)
     async with aiohttp.ClientSession(connector=connector) as session:
-        fetcher = DataFetcher(session)
-        visualizer = Visualizer(BACKGROUND_IMAGE_PATH)
+        fetcher = fetch.DataFetcher(session)
+        visualizer = viz.Visualizer(BACKGROUND_IMAGE_PATH)
         team_name_mapping = get_team_name_mapping()
 
         for season, total_games in SEASONS_GAMES_MAPPING.items():
             for game_batch_start in range(1, total_games + 1, BATCH_SIZE):
                 game_batch_end = min(game_batch_start + BATCH_SIZE, total_games + 1)
-                tasks = [asyncio.ensure_future(DataProcessor.process_game(game_id, season, fetcher, team_name_mapping))
+                tasks = [asyncio.ensure_future(dp.DataProcessor.process_game(game_id, season, fetcher, team_name_mapping))
                          for game_id in range(game_batch_start, game_batch_end)]
                 results = await asyncio.gather(*tasks, return_exceptions=True)
                 for result in results:
