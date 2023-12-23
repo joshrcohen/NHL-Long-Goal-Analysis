@@ -13,13 +13,14 @@ import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 from matplotlib.lines import Line2D
 from matplotlib.animation import FuncAnimation
+import matplotlib.patches as mpatches
 from concurrent.futures import ThreadPoolExecutor
 
 # Constants
 BATCH_SIZE = 1312
 BACKGROUND_IMAGE_PATH = './Resources/hockeyRink.png'
 DISTANCE_CUTOFF = -1
-TIME_CUTOFF = 5
+TIME_CUTOFF = 1200   #seconds
 BASE_URL = "https://api-web.nhle.com/v1/gamecenter"
 ARENA_URL = "https://raw.githubusercontent.com/nhlscorebot/arenas/master/teams.json"
 
@@ -37,11 +38,12 @@ SEASONS_GAMES_MAPPING = {
     #2017: 1230,
     #2018: 1230,
     #2019: 1082,
-    2020: 868,
-    2021: 1312,
+    #2020: 868,
+    #2021: 1312,
     2022: 1312,
 }
 
+#get_team_name_mapping
 def get_team_name_mapping():
     """
     Provides a mapping from team abbreviations to full team names.
@@ -84,6 +86,13 @@ def get_team_name_mapping():
             "Kraken": "Seattle Kraken"
         }
 
+#print_runtime
+def print_runtime(start_time):
+    total_seconds = int(time.time() - start_time)
+    hours, minutes, seconds = total_seconds // 3600, (total_seconds % 3600) // 60, total_seconds % 60
+    print(f"Total runtime: {hours:02d}:{minutes:02d}:{seconds:02d}")
+
+#DataFetcher
 class DataFetcher:
     def __init__(self, session):
         self.session = session
@@ -140,8 +149,9 @@ class DataFetcher:
             standings_response_json = await response.json()
             return standings_response_json['standings']
 
-
+#DataProcessor
 class DataProcessor:
+    #calculate_shot_distance
     @staticmethod
     def calculate_shot_distance(x_coord, y_coord, shooting_team, home_team_id, home_team_defending_side, zone_code):
         if home_team_defending_side is not None:
@@ -161,6 +171,7 @@ class DataProcessor:
         distance = math.sqrt(((x_coord - target_goal_x) ** 2) + ((y_coord - target_goal_y) ** 2))
         return distance
 
+    #process_play
     @staticmethod
     def process_play(play, game_data, players, team_name_mapping, scoring, game_date, arena, season, home_team_record, away_team_record):
         try:
@@ -190,6 +201,9 @@ class DataProcessor:
                 event_description += f". Goals To Date: {goals_to_date}"
 
             teams_formatted = f"{game_data['homeTeam']['name']['default']} ({home_team_record['wins']}-{home_team_record['losses']}-{home_team_record['ot_losses']}-{home_team_record['points']}) v. {game_data['awayTeam']['name']['default']} ({away_team_record['wins']}-{away_team_record['losses']}-{away_team_record['ot_losses']}-{away_team_record['points']})"
+            
+            #just for david rn
+            play_type = "GOAL" if play['typeDescKey'].strip().lower() == 'goal' else "MISS"
 
             return {
                 "GameID": game_data["id"],
@@ -205,17 +219,18 @@ class DataProcessor:
                 "Event Description": event_description,
                 "Distance": f"{shot_distance:.2f} feet",
                 "Score": f"{details.get('awayScore', 0)} - {details.get('homeScore', 0)}",
-                "Play-by-Play URL": f"https://www.nhl.com/scores/htmlreports/{season}{season+1}/PL02{str(game_data['id'])[-4:]}.HTM",
+                #"Play-by-Play URL": f"https://www.nhl.com/scores/htmlreports/{season}{season+1}/PL02{str(game_data['id'])[-4:]}.HTM",
                 "Season": season
             }
         except Exception as e:
             print(f"Unhandled error in process_play: {e} - Play: {play}")
             return None
-
+    
+    #process_game
     @staticmethod
     async def process_game(game_id, season, fetcher, team_name_mapping):
         formatted_game_id = f"{season}02{game_id:04d}"
-        print(f"Checking game: {game_id} Season: {season}")
+        print(f"Checking game: {game_id:04d} Season: {season}")
 
         try:
             game_data = await fetcher.fetch_game_data(formatted_game_id)
@@ -248,37 +263,53 @@ class DataProcessor:
             print(f"Error processing game {formatted_game_id}: {e}")
             return []
 
-
+#Visualizer
 class Visualizer:
+
+    #init
     def __init__(self, background_image_path):
         self.background_image_path = background_image_path
-
+    
+    #create_heatmap
     def create_heatmap(self, df, output_path):
         if df.empty:
             print("DataFrame is empty. Cannot create heatmap.")
             return
-
-        plt.figure(figsize=(12, 7))
+        
+        # Filter out any points that are off the rink
+        df = df[(df['x_coord'] >= -100) & (df['x_coord'] <= 100) & (df['y_coord'] >= -42.5) & (df['y_coord'] <= 42.5)]
+        
+        # Increase figure size for better resolution
+        plt.figure(figsize=(15, 8), dpi=600)  # Use a larger figure size and higher DPI
         img = mpimg.imread(self.background_image_path)
         plt.imshow(img, extent=[-100, 100, -42.5, 42.5])
+        
+        # Plot goals and misses with different colors
+        goals_df = df[df['Play Type'] == 'GOAL']
+        misses_df = df[df['Play Type'] == 'MISS']
 
-        sns.kdeplot(
-            data=df,
-            x='x_coord',
-            y='y_coord',
-            cmap="Reds",
-            fill=True,
-            alpha=0.7
-        )
-
-        plt.xlim(-100, 100)
-        plt.ylim(-42.5, 42.5)
+        plt.scatter(goals_df['x_coord'], goals_df['y_coord'], c='gold', edgecolors='black', label='Goals', zorder=2)
+        plt.scatter(misses_df['x_coord'], misses_df['y_coord'], c='silver', alpha=0.7, label='Misses', zorder=1)
+        
+        # Set the aspect of the plot to be equal
+        plt.gca().set_aspect('equal', adjustable='box')
+        
+        # Remove axes for a cleaner look
         plt.axis('off')
-        plt.tight_layout()
-        plt.savefig(output_path)
+        
+        # Create a legend and position it at the bottom of the plot
+        legend_elements = [
+            mpatches.Patch(color='gold', label='Goals'),
+            mpatches.Patch(color='silver', label='Misses'),
+        ]
+        plt.legend(handles=legend_elements, loc='lower center', bbox_to_anchor=(0.5, -0.05), ncol=2, frameon=False)
+
+        # Save the figure with high DPI and tight bounding box
+        plt.savefig(output_path, dpi=600, bbox_inches='tight')
         plt.close()
         print(f"Heatmap saved as '{output_path}'")
-
+    
+    #create_seasonal_heatmap
     def create_seasonal_heatmap(self, df, season, output_folder):
         season_df = df[df['Season'] == season]
         if season_df.empty:
@@ -288,6 +319,7 @@ class Visualizer:
         heatmap_filename = f'{output_folder}/heatmap_season_{season}.png'
         self.create_heatmap(season_df, heatmap_filename)
 
+    #animate_heatmaps
     def animate_heatmaps(self, seasons, output_folder):
         fig, ax = plt.subplots(figsize=(10, 7))
         fig.subplots_adjust(top=0.85)
@@ -317,6 +349,7 @@ class Visualizer:
         anim.save(f'{output_folder}/seasons_heatmap_animation.gif', writer='pillow', fps=4)
         plt.close()
 
+#main
 async def main():
     start_time = time.time()
     all_seasons_shots_data = []
@@ -328,21 +361,16 @@ async def main():
         team_name_mapping = get_team_name_mapping()
 
         for season, total_games in SEASONS_GAMES_MAPPING.items():
-            tasks = []
-            for game_id in range(1, total_games + 1):
-                task = asyncio.ensure_future(DataProcessor.process_game(game_id, season, fetcher, team_name_mapping))
-                tasks.append(task)
-
-                if len(tasks) >= BATCH_SIZE:
-                    results = await asyncio.gather(*tasks)
-                    for game_shots in results:
-                        all_seasons_shots_data.extend(game_shots)
-                    tasks = []
-
-            if tasks:
-                results = await asyncio.gather(*tasks)
-                for game_shots in results:
-                    all_seasons_shots_data.extend(game_shots)
+            for game_batch_start in range(1, total_games + 1, BATCH_SIZE):
+                game_batch_end = min(game_batch_start + BATCH_SIZE, total_games + 1)
+                tasks = [asyncio.ensure_future(DataProcessor.process_game(game_id, season, fetcher, team_name_mapping))
+                         for game_id in range(game_batch_start, game_batch_end)]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                for result in results:
+                    if isinstance(result, Exception):
+                        print(f"Error in processing game: {result}")
+                    else:
+                        all_seasons_shots_data.extend(result)
 
         df = pd.DataFrame(all_seasons_shots_data)
 
@@ -350,10 +378,10 @@ async def main():
         if not os.path.exists(output_folder):
             os.makedirs(output_folder)
 
-        for season in SEASONS_GAMES_MAPPING.keys():
-            visualizer.create_seasonal_heatmap(df, season, output_folder)
+        #for season in SEASONS_GAMES_MAPPING.keys():
+            #visualizer.create_seasonal_heatmap(df, season, output_folder)
 
-        visualizer.animate_heatmaps(SEASONS_GAMES_MAPPING.keys(), output_folder)
+        #visualizer.animate_heatmaps(SEASONS_GAMES_MAPPING.keys(), output_folder)
 
         start_year = min(SEASONS_GAMES_MAPPING.keys())
         end_year = max(SEASONS_GAMES_MAPPING.keys())
@@ -361,12 +389,6 @@ async def main():
         df.to_excel(excel_file_name, index=False, engine='xlsxwriter')
 
     print_runtime(start_time)
-
-
-def print_runtime(start_time):
-    total_seconds = int(time.time() - start_time)
-    hours, minutes, seconds = total_seconds // 3600, (total_seconds % 3600) // 60, total_seconds % 60
-    print(f"Total runtime: {hours:02d}:{minutes:02d}:{seconds:02d}")
 
 if __name__ == "__main__":
     asyncio.run(main())
