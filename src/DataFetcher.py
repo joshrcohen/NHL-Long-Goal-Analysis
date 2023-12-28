@@ -1,14 +1,14 @@
 import os
+import aiohttp
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
+from flask import request
 
 load_dotenv()
 
 BASE_URL = os.getenv('BASE_URL')
 
 class DataFetcher:
-    def __init__(self, session):
-        self.session = session
 
     async def fetch_team_record(self, team_name, standings):
         team_name_key = team_name.split()[-1].lower()
@@ -36,15 +36,18 @@ class DataFetcher:
             print(f"{team_name} not found in arenas_info")
             return None
 
-    async def fetch_game_data(self, game_id):
+    async def fetch_game_data(game_id):
         pbp_endpoint = f"{BASE_URL}/{game_id}/play-by-play"
-        async with self.session.get(pbp_endpoint) as pbp_response:
+        async with aiohttp.ClientSession() as pbp_response:
+            async with pbp_response.get(pbp_endpoint) as response:
+                return await response.json()
+            '''
             if pbp_response.content_type == 'application/json':
                 return await pbp_response.json()
             else:
                 print(f"Non-JSON response for game {game_id}: {pbp_response.status} {pbp_response.reason}")
                 return None
-
+            '''
     async def fetch_landing_data(self, game_id):
         landing_endpoint = f"{BASE_URL}/{game_id}/landing"
         async with self.session.get(landing_endpoint) as response:
